@@ -13,7 +13,7 @@ TARGET_SERVER = server/server
 TARGET_CLIENT = client/client
 
 # Các file .c của server (tạm thời)
-SERVER_SRCS = server/server.c server/db_handler.c server/user_manager.c server/message_handler.c
+SERVER_SRCS = server/server.c server/db_handler.c server/user_manager.c server/message_handler.c server/friend_manager.c
 # Các file .c của client (tạm thời)
 CLIENT_SRCS = client/client.c client/ui.c
 all: $(TARGET_SERVER) $(TARGET_CLIENT)

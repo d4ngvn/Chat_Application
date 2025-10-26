@@ -112,16 +112,18 @@ void ui_update_options(ClientState state) {
         mvwprintw(win_option, y++, 1, "USAGE: /<option>"); // (y, x)
         /* replaced empty-format string to avoid compiler warning */
         mvwprintw(win_option, y++, 1, " ");
-        mvwprintw(win_option, y++, 1, "1. Login");
-        mvwprintw(win_option, y++, 1, "2. Register");
+        mvwprintw(win_option, y++, 1, "1. Login (/1)");
+        mvwprintw(win_option, y++, 1, "2. Register (/2)");
     } else if (state == STATE_LOGGED_IN) {
         mvwprintw(win_option, y++, 1, "USAGE: /<option>");
         mvwprintw(win_option, y++, 1, "-------------------");
-        mvwprintw(win_option, y++, 1, "1. Private Chat (/msg)");
-        mvwprintw(win_option, y++, 1, "2. List Friends");
-        mvwprintw(win_option, y++, 1, "3. Add Friend (/friend)");
+        mvwprintw(win_option, y++, 1, "1. Private Chat (/msg )");
+        mvwprintw(win_option, y++, 1, "2. List Friends(/friends)");
+        mvwprintw(win_option, y++, 1, "3. Add Friend (/add)");
         mvwprintw(win_option, y++, 1, "4. Accept Friend (/accept)");
         mvwprintw(win_option, y++, 1, "5. Create Group (/group)");
+        mvwprintw(win_option, y++, 1, "6. Decline Friend (/decline)");
+        mvwprintw(win_option, y++, 1, "7. Unfriend (/unfriend)");
         // ... (thêm các lệnh khác nếu cần)
         mvwprintw(win_option, y++, 1, "/exit - Thoát");
     }

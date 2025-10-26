@@ -191,3 +191,117 @@ int db_authenticate_user(sqlite3* db, const char* username, const char* password
     if (rc == 0) return 1; // db_login_user: 0 == success
     return 0; // any non-zero = failure
 }
+
+int db_friend_request(sqlite3 *db, const char* sender, const char* receiver) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "INSERT INTO friends (user_a, user_b, status) VALUES (?, ?, 0);";
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare friend_request: %s\n", sqlite3_errmsg(db));
+        if (stmt) sqlite3_finalize(stmt);
+        return 1;
+    }
+
+    sqlite3_bind_text(stmt, 1, sender, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, receiver, -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc == SQLITE_DONE) {
+        return 0;
+    } else if (rc == SQLITE_CONSTRAINT) {
+        // already exists or violates constraint
+        return 1;
+    } else {
+        fprintf(stderr, "SQL error in friend_request: %s\n", sqlite3_errmsg(db));
+        return 1;
+    }
+}
+
+// (MỚI) Chấp nhận (status = 1)
+int db_friend_accept(sqlite3 *db, const char* accepter, const char* sender) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "UPDATE friends SET status = 1 WHERE user_a = ? AND user_b = ? AND status = 0;";
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare friend_accept: %s\n", sqlite3_errmsg(db));
+        if (stmt) sqlite3_finalize(stmt);
+        return 1;
+    }
+    sqlite3_bind_text(stmt, 1, sender, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, accepter, -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+    int changes = sqlite3_changes(db);
+    sqlite3_finalize(stmt);
+
+    return (rc == SQLITE_DONE && changes > 0) ? 0 : 1;
+}
+
+// (MỚI) Từ chối hoặc Hủy bạn
+int db_friend_decline(sqlite3 *db, const char* decliner, const char* sender) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "DELETE FROM friends WHERE user_a = ? AND user_b = ? AND status = 0;";
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare friend_decline: %s\n", sqlite3_errmsg(db));
+        if (stmt) sqlite3_finalize(stmt);
+        return 1;
+    }
+    sqlite3_bind_text(stmt, 1, sender, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, decliner, -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+    int changes = sqlite3_changes(db);
+    sqlite3_finalize(stmt);
+
+    return (rc == SQLITE_DONE && changes > 0) ? 0 : 1;
+}
+
+int db_friend_unfriend(sqlite3 *db, const char* user1, const char* user2) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "DELETE FROM friends WHERE status = 1 AND ((user_a = ? AND user_b = ?) OR (user_a = ? AND user_b = ?));";
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare friend_unfriend: %s\n", sqlite3_errmsg(db));
+        if (stmt) sqlite3_finalize(stmt);
+        return 1;
+    }
+    sqlite3_bind_text(stmt, 1, user1, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, user2, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, user2, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, user1, -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+    int changes = sqlite3_changes(db);
+    sqlite3_finalize(stmt);
+
+    return (rc == SQLITE_DONE && changes > 0) ? 0 : 1;
+}
+
+// (MỚI) Lấy danh sách bạn bè (status = 1)
+int db_get_friend_list(sqlite3 *db, const char* user, db_friend_list_callback callback, void* arg) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT user_b FROM friends WHERE user_a = ? AND status = 1 "
+                      "UNION "
+                      "SELECT user_a FROM friends WHERE user_b = ? AND status = 1;";
+    
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare get_friend_list: %s\n", sqlite3_errmsg(db));
+        if (stmt) sqlite3_finalize(stmt);
+        return 1;
+    }
+
+    sqlite3_bind_text(stmt, 1, user, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, user, -1, SQLITE_STATIC);
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const char *friend_name = (const char*)sqlite3_column_text(stmt, 0);
+        callback(arg, friend_name); // Gọi callback cho mỗi người bạn
+    }
+    
+    sqlite3_finalize(stmt);
+    return 0;
+}

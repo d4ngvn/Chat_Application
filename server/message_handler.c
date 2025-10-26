@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include "server.h"
 
 // Hàm này sẽ gửi danh sách online cho mọi người
 extern void broadcast_online_list(ClientSession* sessions);

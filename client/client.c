@@ -14,6 +14,22 @@
 #define PORT 8888
 #define INPUT_MAX 500
 
+// Ensure MAX_PASSWORD is defined for the client UI password buffer
+#ifndef MAX_PASSWORD
+#define MAX_PASSWORD 128
+#endif
+
+// Provide a global server socket FD used by send_packet
+int server_sock_fd = -1;
+
+// Remove extern declaration and add a real implementation for send_packet
+int send_packet(ChatPacket* packet) {
+    if (!packet) return -1;
+    if (server_sock_fd <= 0) return -1;
+    ssize_t w = write(server_sock_fd, packet, sizeof(ChatPacket));
+    return (w == sizeof(ChatPacket)) ? 0 : -1;
+}
+
 // --- Biến Trạng thái Toàn cục ---
 ClientState current_state = STATE_PRE_LOGIN;
 char current_user[MAX_USERNAME]; // Lưu tên user
@@ -43,6 +59,12 @@ void handle_keyboard_input(int sock_fd);
 void do_login_flow(int sock_fd);
 void do_register_flow(int sock_fd);
 
+// New: interactive friend flows (prompt-based)
+void do_add_friend_flow(int sock_fd);
+void do_accept_friend_flow(int sock_fd);
+void do_decline_friend_flow(int sock_fd);
+void do_unfriend_flow(int sock_fd);
+
 // (Hàm xử lý resize tín hiệu)
 void handle_resize(int sig) {
     (void)sig; // Tắt cảnh báo unused parameter
@@ -54,6 +76,9 @@ int main() {
 
     int sock_fd = connect_to_server();
     if (sock_fd == -1) return 1;
+
+    // Set global socket for send_packet
+    server_sock_fd = sock_fd;
 
     ui_init();
     
@@ -146,6 +171,90 @@ void do_register_flow(int sock_fd) {
     ui_add_log("Register request sent. Waiting for server...");
 }
 
+// (HÀM MỚI) Logic hỏi và gửi packet Add Friend (interactive)
+void do_add_friend_flow(int sock_fd) {
+    ChatPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = MSG_TYPE_FRIEND_REQUEST;
+
+    ui_add_log("Add> Enter username to add:");
+    char target[MAX_USERNAME];
+    if (ui_get_input(target, MAX_USERNAME) == -1) return; // interrupted by resize
+    ui_clear_input();
+
+    if (strlen(target) == 0) {
+        ui_add_log("Add cancelled: empty username.");
+        return;
+    }
+
+    strncpy(pkt.target_user, target, MAX_USERNAME - 1);
+    if (send_packet(&pkt) == 0) ui_add_log("Friend request sent.");
+    else ui_add_log("Failed to send friend request.");
+}
+
+// (HÀM MỚI) Accept friend interactive
+void do_accept_friend_flow(int sock_fd) {
+    ChatPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = MSG_TYPE_FRIEND_ACCEPT;
+
+    ui_add_log("Accept> Enter username to accept:");
+    char target[MAX_USERNAME];
+    if (ui_get_input(target, MAX_USERNAME) == -1) return;
+    ui_clear_input();
+
+    if (strlen(target) == 0) {
+        ui_add_log("Accept cancelled: empty username.");
+        return;
+    }
+
+    strncpy(pkt.target_user, target, MAX_USERNAME - 1);
+    if (send_packet(&pkt) == 0) ui_add_log("Friend accept sent.");
+    else ui_add_log("Failed to send accept.");
+}
+
+// (HÀM MỚI) Decline friend interactive
+void do_decline_friend_flow(int sock_fd) {
+    ChatPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = MSG_TYPE_FRIEND_DECLINE;
+
+    ui_add_log("Decline> Enter username to decline:");
+    char target[MAX_USERNAME];
+    if (ui_get_input(target, MAX_USERNAME) == -1) return;
+    ui_clear_input();
+
+    if (strlen(target) == 0) {
+        ui_add_log("Decline cancelled: empty username.");
+        return;
+    }
+
+    strncpy(pkt.target_user, target, MAX_USERNAME - 1);
+    if (send_packet(&pkt) == 0) ui_add_log("Friend decline sent.");
+    else ui_add_log("Failed to send decline.");
+}
+
+// (HÀM MỚI) Unfriend interactive
+void do_unfriend_flow(int sock_fd) {
+    ChatPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = MSG_TYPE_FRIEND_UNFRIEND;
+
+    ui_add_log("Unfriend> Enter username to remove:");
+    char target[MAX_USERNAME];
+    if (ui_get_input(target, MAX_USERNAME) == -1) return;
+    ui_clear_input();
+
+    if (strlen(target) == 0) {
+        ui_add_log("Unfriend cancelled: empty username.");
+        return;
+    }
+
+    strncpy(pkt.target_user, target, MAX_USERNAME - 1);
+    if (send_packet(&pkt) == 0) ui_add_log("Unfriend request sent.");
+    else ui_add_log("Failed to send unfriend.");
+}
+
 // (VIẾT LẠI HOÀN TOÀN) Bộ não điều khiển input
 void handle_keyboard_input(int sock_fd) {
     char buffer[INPUT_MAX];
@@ -219,10 +328,79 @@ void handle_keyboard_input(int sock_fd) {
                 sleep(1);
                 exit(0);
             }
-            else if (strncmp(buffer, "/friend ", 8) == 0) { 
-                 ui_add_log("Sending friend request... (Not implemented yet)");
-                 // Gửi packet MSG_TYPE_FRIEND_REQUEST (not implemented)
+            else if (strncmp(buffer, "/add ", 5) == 0) {
+                // inline form: /add username
+                char *target = buffer + 5;
+                // trim leading spaces
+                while (*target && isspace((unsigned char)*target)) target++;
+                // trim trailing spaces
+                size_t tlen = strlen(target);
+                while (tlen > 0 && isspace((unsigned char)target[tlen-1])) { target[tlen-1] = '\0'; tlen--; }
+                if (tlen == 0) {
+                    ui_add_log("Usage: /add <username>  or type /add to prompt.");
+                    return;
+                }
+                ChatPacket pkt;
+                memset(&pkt, 0, sizeof(pkt));
+                pkt.type = MSG_TYPE_FRIEND_REQUEST;
+                strncpy(pkt.target_user, target, MAX_USERNAME - 1);
+                if (send_packet(&pkt) == 0) ui_add_log("Friend request sent.");
+                else ui_add_log("Failed to send friend request.");
+            } else if (strcmp(buffer, "/add") == 0) {
+                // interactive prompt form
+                do_add_friend_flow(sock_fd);
             }
+            else if (strncmp(buffer, "/accept ", 8) == 0) {
+                // inline /accept username
+                char *target = buffer + 8;
+                while (*target && isspace((unsigned char)*target)) target++;
+                size_t tlen = strlen(target);
+                while (tlen > 0 && isspace((unsigned char)target[tlen-1])) { ((char*)target)[tlen-1] = '\0'; tlen--; }
+                if (tlen == 0) { ui_add_log("Usage: /accept <username>  or type /accept to prompt."); return; }
+                ChatPacket pkt;
+                memset(&pkt, 0, sizeof(pkt));
+                pkt.type = MSG_TYPE_FRIEND_ACCEPT;
+                strncpy(pkt.target_user, target, MAX_USERNAME-1);
+                if (send_packet(&pkt) == 0) ui_add_log("Friend accept sent.");
+                else ui_add_log("Failed to send accept.");
+            } else if (strcmp(buffer, "/accept") == 0) {
+                do_accept_friend_flow(sock_fd);
+            } else if (strncmp(buffer, "/decline ", 9) == 0) {
+                // inline /decline username
+                char *target = buffer + 9;
+                while (*target && isspace((unsigned char)*target)) target++;
+                size_t tlen = strlen(target);
+                while (tlen > 0 && isspace((unsigned char)target[tlen-1])) { ((char*)target)[tlen-1] = '\0'; tlen--; }
+                if (tlen == 0) { ui_add_log("Usage: /decline <username>  or type /decline to prompt."); return; }
+                ChatPacket pkt;
+                memset(&pkt, 0, sizeof(pkt));
+                pkt.type = MSG_TYPE_FRIEND_DECLINE;
+                strncpy(pkt.target_user, target, MAX_USERNAME-1);
+                if (send_packet(&pkt) == 0) ui_add_log("Friend decline sent.");
+                else ui_add_log("Failed to send decline.");
+            } else if (strcmp(buffer, "/decline") == 0) {
+                do_decline_friend_flow(sock_fd);
+            } else if (strncmp(buffer, "/unfriend ", 10) == 0) {
+                // inline /unfriend username
+                char *target = buffer + 10;
+                while (*target && isspace((unsigned char)*target)) target++;
+                size_t tlen = strlen(target);
+                while (tlen > 0 && isspace((unsigned char)target[tlen-1])) { ((char*)target)[tlen-1] = '\0'; tlen--; }
+                if (tlen == 0) { ui_add_log("Usage: /unfriend <username>  or type /unfriend to prompt."); return; }
+                ChatPacket pkt;
+                memset(&pkt, 0, sizeof(pkt));
+                pkt.type = MSG_TYPE_FRIEND_UNFRIEND;
+                strncpy(pkt.target_user, target, MAX_USERNAME-1);
+                if (send_packet(&pkt) == 0) ui_add_log("Unfriend request sent.");
+                else ui_add_log("Failed to send unfriend.");
+            } else if (strcmp(buffer, "/unfriend") == 0) {
+                do_unfriend_flow(sock_fd);
+            } else if (strcmp(buffer, "/friends") == 0 || strcmp(buffer, "/2") == 0) {
+                 ChatPacket pkt;
+                 memset(&pkt, 0, sizeof(pkt));
+                 pkt.type = MSG_TYPE_FRIEND_LIST_REQUEST;
+                 send_packet(&pkt);
+             }
             else {
                 ui_add_log("Unknown command. Check OPTIONS menu.");
             }
@@ -246,7 +424,7 @@ void handle_keyboard_input(int sock_fd) {
             } 
             else if (current_chat_type == CHAT_TYPE_GROUP) {
                 packet.type = MSG_TYPE_GROUP_MESSAGE;
-                strncpy(packet.target_group, current_chat_target, MAX_USERNAME);
+                strncpy(packet.target_user, current_chat_target, MAX_USERNAME);
                 snprintf(my_msg, sizeof(my_msg), "[Me to #%s]: %s", current_chat_target, buffer);
             }
 
@@ -330,7 +508,7 @@ void handle_server_message(int sock_fd) {
 
         case MSG_TYPE_RECEIVE_GROUP_MESSAGE: // (THÊM MỚI)
             snprintf(buffer, sizeof(buffer), "[#%.*s from %.*s]: %.*s",
-                     (int)MAX_USERNAME, packet.target_group,
+                     (int)MAX_USERNAME, packet.target_user,
                      (int)MAX_USERNAME, packet.source_user,
                      (int)MAX_BODY, packet.body);
             ui_add_message(buffer);
@@ -351,8 +529,28 @@ void handle_server_message(int sock_fd) {
             ui_add_log(buffer);
             break;
 
+        case MSG_TYPE_FRIEND_LIST_RESPONSE:
+            ui_add_log(packet.body);
+            break;
+
+        case MSG_TYPE_FRIEND_REQUEST_INCOMING: {
+            char buf[MAX_BODY];
+            snprintf(buf, sizeof(buf), "Friend request from %s. Type: /accept %s or /decline %s", packet.source_user, packet.source_user, packet.source_user);
+            ui_add_log(buf);
+        } break;
+
+        case MSG_TYPE_FRIEND_UPDATE:
+            // Generic updates (success/failure/status). Display the body if provided, otherwise show source_user + default message.
+            if (packet.body[0]) ui_add_log(packet.body);
+            else {
+                char buf[MAX_BODY];
+                snprintf(buf, sizeof(buf), "Friend update: %s", packet.source_user);
+                ui_add_log(buf);
+            }
+            break;
+
         default:
-            // (Phản hồi cho /friend, /group... sẽ rơi vào đây)
+            // (Phản hồi cho /friends, /group... sẽ rơi vào đây)
             snprintf(buffer, sizeof(buffer), "Server: %.*s",
                      (int)MAX_BODY, packet.body);
             ui_add_log(buffer);

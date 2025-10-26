@@ -1,6 +1,6 @@
 #ifndef SERVER_H
 #define SERVER_H
-
+#include "friend_manager.h"
 #include "../shared/protocol.h"
 
 #define MAX_CLIENTS 100

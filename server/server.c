@@ -11,6 +11,7 @@
 #include "db_handler.h"
 #include "user_manager.h"
 #include "server.h" // File .h ta vừa tạo
+#include "friend_manager.h" // <-- ADD: declare friend-related handlers
 
 #define PORT 8888
 #define MAX_EVENTS 10
@@ -121,7 +122,27 @@ void process_packet(int client_fd, ChatPacket* packet) {
         case MSG_TYPE_PRIVATE_MESSAGE: // <-- THÊM CASE MỚI
             handle_private_message(packet, sessions, db);
             break;
-        // ... (các case khác sẽ thêm ở Ngày 3)
+        case MSG_TYPE_FRIEND_REQUEST:
+            handle_friend_request(client_fd, packet, sessions, db);
+            break;
+
+        case MSG_TYPE_FRIEND_ACCEPT:
+            handle_friend_accept(client_fd, packet, sessions, db);
+            break;
+
+        case MSG_TYPE_FRIEND_DECLINE:
+            handle_friend_decline(client_fd, packet, sessions, db);
+            break;
+
+        case MSG_TYPE_FRIEND_UNFRIEND:
+            handle_friend_unfriend(client_fd, packet, sessions, db);
+            break;
+
+        case MSG_TYPE_FRIEND_LIST_REQUEST:
+            // session should be the current client's session; adjust name if different
+            handle_friend_list_request(client_fd, session->username, sessions, db);
+            break;
+
         default:
             printf("Received unknown packet type from fd %d\n", client_fd);
     }
