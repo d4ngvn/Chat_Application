@@ -1,0 +1,55 @@
+Bảng Users:
+
+SQL
+
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password TEXT NOT NULL
+);
+Bảng Friends:
+
+SQL
+
+CREATE TABLE friends (
+    user_a TEXT NOT NULL,
+    user_b TEXT NOT NULL,
+    status INTEGER NOT NULL,
+    PRIMARY KEY (user_a, user_b),
+    FOREIGN KEY (user_a) REFERENCES users(username),
+    FOREIGN KEY (user_b) REFERENCES users(username)
+);
+Bảng Offline Messages:
+
+SQL
+
+CREATE TABLE offline_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    to_user TEXT NOT NULL,
+    from_user TEXT NOT NULL,
+    message TEXT NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (to_user) REFERENCES users(username),
+    FOREIGN KEY (from_user) REFERENCES users(username)
+);
+Bảng Groups:
+
+SQL
+
+CREATE TABLE groups (
+    group_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_name TEXT NOT NULL UNIQUE,
+    owner_username TEXT NOT NULL,
+    FOREIGN KEY (owner_username) REFERENCES users(username)
+);
+Bảng Group Members:
+
+SQL
+
+CREATE TABLE group_members (
+    group_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    PRIMARY KEY (group_id, username),
+    FOREIGN KEY (group_id) REFERENCES groups(group_id),
+    FOREIGN KEY (username) REFERENCES users(username)
+);

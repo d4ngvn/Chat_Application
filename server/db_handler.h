@@ -1,0 +1,22 @@
+#ifndef DB_HANDLER_H
+#define DB_HANDLER_H
+
+#include <sqlite3.h>
+#include "../shared/protocol.h"
+
+// Mở và đóng database
+int db_open(const char* db_path, sqlite3** db);
+void db_close(sqlite3* db);
+
+// Xử lý đăng ký và xác thực
+void handle_register(int client_fd, ChatPacket* packet, sqlite3* db);
+int db_authenticate_user(sqlite3* db, const char* username, const char* password);
+int db_register_user(sqlite3* db, const char* username, const char* password);
+int db_login_user(sqlite3* db, const char* username, const char* password);
+int db_user_exists(sqlite3* db, const char* username); // Kiểm tra sự tồn tại của người dùng
+
+// Xử lý tin nhắn offline
+int db_store_offline_message(sqlite3* db, const char* sender, const char* receiver, const char* message);
+int db_send_pending_messages(sqlite3* db, const char* user, void (*callback)(void* arg, ChatPacket* packet), void* arg);
+
+#endif // DB_HANDLER_H
