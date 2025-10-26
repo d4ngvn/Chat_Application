@@ -65,7 +65,17 @@ void do_accept_friend_flow(int sock_fd);
 void do_decline_friend_flow(int sock_fd);
 void do_unfriend_flow(int sock_fd);
 
-// (Hàm xử lý resize tín hiệu)
+// New: interactive group flows
+void do_create_group_flow(int sock_fd);
+void do_join_group_flow(int sock_fd, const char* groupname_inline);
+void do_invite_group_flow(int sock_fd);
+void do_remove_group_flow(int sock_fd);
+void do_leave_group_flow(int sock_fd);
+
+// NEW: Prompt-based /msg handler (declare before use)
+void do_msg_prompt_flow(int sock_fd);
+
+// (HÀM XỬ LÝ RESIZE TÍN HIỆU)
 void handle_resize(int sig) {
     (void)sig; // Tắt cảnh báo unused parameter
     g_resized = 1; // Chỉ set cờ, không làm gì nặng
@@ -255,6 +265,161 @@ void do_unfriend_flow(int sock_fd) {
     else ui_add_log("Failed to send unfriend.");
 }
 
+// (HÀM MỚI) Tạo nhóm (Create Group) interactive
+void do_create_group_flow(int sock_fd) {
+    ChatPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = MSG_TYPE_CREATE_GROUP_REQUEST;
+
+    ui_add_log("Create Group> Enter group name:");
+    if (ui_get_input(pkt.target_user, MAX_USERNAME) == -1) return;
+    ui_clear_input();
+
+    if (strlen(pkt.target_user) == 0) {
+        ui_add_log("Create cancelled: empty name.");
+        return;
+    }
+
+    if (send_packet(&pkt) == 0) ui_add_log("Create group request sent.");
+    else ui_add_log("Failed to send create group request.");
+}
+
+// (HÀM MỚI) Tham gia nhóm (Join Group) interactive
+void do_join_group_flow(int sock_fd, const char* groupname_inline) {
+    ChatPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = MSG_TYPE_JOIN_GROUP_REQUEST;
+
+    if (groupname_inline && strlen(groupname_inline) > 0) {
+        strncpy(pkt.target_user, groupname_inline, MAX_USERNAME-1);
+    } else {
+        ui_add_log("Join> Enter group name:");
+        if (ui_get_input(pkt.target_user, MAX_USERNAME) == -1) return;
+        ui_clear_input();
+    }
+
+    if (strlen(pkt.target_user) == 0) {
+        ui_add_log("Join cancelled: empty name.");
+        return;
+    }
+
+    if (send_packet(&pkt) == 0) {
+        ui_add_log("Join group request sent.");
+        // Immediately switch to group chat on client side (server will notify)
+        current_chat_type = CHAT_TYPE_GROUP;
+        strncpy(current_chat_target, pkt.target_user, MAX_USERNAME-1);
+        char msg[MAX_USERNAME + 30]; snprintf(msg, sizeof(msg), "Chatting in group: %s", current_chat_target);
+        ui_add_log(msg);
+        ui_update_status(msg);
+    } else ui_add_log("Failed to send join request.");
+}
+
+// (HÀM MỚI) Mời người dùng vào nhóm (Invite to Group) interactive
+void do_invite_group_flow(int sock_fd) {
+    ChatPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = MSG_TYPE_INVITE_TO_GROUP_REQUEST;
+
+    ui_add_log("Invite> Enter username to invite:");
+    char user[MAX_USERNAME];
+    if (ui_get_input(user, MAX_USERNAME) == -1) return;
+    ui_clear_input();
+
+    ui_add_log("Invite> Enter group name:");
+    char group[MAX_USERNAME];
+    if (ui_get_input(group, MAX_USERNAME) == -1) return;
+    ui_clear_input();
+
+    if (strlen(user) == 0 || strlen(group) == 0) {
+        ui_add_log("Invite cancelled: missing fields.");
+        return;
+    }
+
+    strncpy(pkt.target_user, user, MAX_USERNAME-1); // invitee
+    strncpy(pkt.body, group, MAX_BODY-1); // group name in body
+    if (send_packet(&pkt) == 0) ui_add_log("Invite request sent.");
+    else ui_add_log("Failed to send invite.");
+}
+
+// (HÀM MỚI) Gỡ người dùng khỏi nhóm (Remove from Group) interactive
+void do_remove_group_flow(int sock_fd) {
+    ChatPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = MSG_TYPE_REMOVE_FROM_GROUP_REQUEST;
+
+    ui_add_log("Remove> Enter username to remove:");
+    char user[MAX_USERNAME];
+    if (ui_get_input(user, MAX_USERNAME) == -1) return;
+    ui_clear_input();
+
+    ui_add_log("Remove> Enter group name:");
+    char group[MAX_USERNAME];
+    if (ui_get_input(group, MAX_USERNAME) == -1) return;
+    ui_clear_input();
+
+    if (strlen(user) == 0 || strlen(group) == 0) {
+        ui_add_log("Remove cancelled: missing fields.");
+        return;
+    }
+
+    strncpy(pkt.target_user, user, MAX_USERNAME-1); // target user
+    strncpy(pkt.body, group, MAX_BODY-1); // group name
+    if (send_packet(&pkt) == 0) ui_add_log("Remove request sent.");
+    else ui_add_log("Failed to send remove request.");
+}
+
+// (HÀM MỚI) Rời khỏi nhóm (Leave Group) interactive
+void do_leave_group_flow(int sock_fd) {
+    ChatPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = MSG_TYPE_LEAVE_GROUP_REQUEST;
+
+    ui_add_log("Leave> Enter group name to leave:");
+    if (ui_get_input(pkt.target_user, MAX_USERNAME) == -1) return;
+    ui_clear_input();
+
+    if (strlen(pkt.target_user) == 0) {
+        ui_add_log("Leave cancelled.");
+        return;
+    }
+
+    if (send_packet(&pkt) == 0) ui_add_log("Leave request sent.");
+    else ui_add_log("Failed to send leave request.");
+}
+
+// --- NEW FUNCTION ---
+// Prompt user when they type "/msg" without argument.
+// Sets chat context to private or group depending on input.
+void do_msg_prompt_flow(int sock_fd) {
+    ui_add_log("Message> Enter username or #<group>:");
+    char target[MAX_USERNAME + 2];
+    if (ui_get_input(target, sizeof(target)) == -1) return; // interrupted by resize
+    ui_clear_input();
+
+    if (strlen(target) == 0) {
+        ui_add_log("Cancelled: empty target.");
+        return;
+    }
+
+    char status_msg[MAX_USERNAME + 30];
+    if (target[0] == '#') {
+        // group
+        current_chat_type = CHAT_TYPE_GROUP;
+        strncpy(current_chat_target, target + 1, MAX_USERNAME - 1);
+        current_chat_target[MAX_USERNAME - 1] = '\0';
+        snprintf(status_msg, sizeof(status_msg), "GROUP: %s", current_chat_target);
+        ui_add_log(status_msg);
+    } else {
+        // private
+        current_chat_type = CHAT_TYPE_PRIVATE;
+        strncpy(current_chat_target, target, MAX_USERNAME - 1);
+        current_chat_target[MAX_USERNAME - 1] = '\0';
+        snprintf(status_msg, sizeof(status_msg), "Chat with user: %s", current_chat_target);
+        ui_add_log(status_msg);
+    }
+    ui_update_status(status_msg);
+}
+
 // (VIẾT LẠI HOÀN TOÀN) Bộ não điều khiển input
 void handle_keyboard_input(int sock_fd) {
     char buffer[INPUT_MAX];
@@ -289,7 +454,10 @@ void handle_keyboard_input(int sock_fd) {
         
         // --- KIỂM TRA LỆNH (Bắt đầu bằng /) ---
         if (buffer[0] == '/') {
-            if (strncmp(buffer, "/msg ", 5) == 0) {
+            // New: handle "/msg" without argument -> prompt
+            if (strcmp(buffer, "/msg") == 0) {
+                do_msg_prompt_flow(sock_fd);
+            } else if (strncmp(buffer, "/msg ", 5) == 0) {
                 // (THAY ĐỔI LỚN) Lệnh này giờ chỉ để CHUYỂN NGỮ CẢNH
                 char *target = buffer + 5;
                 
@@ -326,6 +494,7 @@ void handle_keyboard_input(int sock_fd) {
                 // clear auth state locally
                 is_authenticated = 0;
                 sleep(1);
+                close(sock_fd);
                 exit(0);
             }
             else if (strncmp(buffer, "/add ", 5) == 0) {
@@ -349,8 +518,7 @@ void handle_keyboard_input(int sock_fd) {
             } else if (strcmp(buffer, "/add") == 0) {
                 // interactive prompt form
                 do_add_friend_flow(sock_fd);
-            }
-            else if (strncmp(buffer, "/accept ", 8) == 0) {
+            } else if (strncmp(buffer, "/accept ", 8) == 0) {
                 // inline /accept username
                 char *target = buffer + 8;
                 while (*target && isspace((unsigned char)*target)) target++;
@@ -401,9 +569,65 @@ void handle_keyboard_input(int sock_fd) {
                  pkt.type = MSG_TYPE_FRIEND_LIST_REQUEST;
                  send_packet(&pkt);
              }
-            else {
-                ui_add_log("Unknown command. Check OPTIONS menu.");
+            else if (strcmp(buffer, "/group_create") == 0 || strcmp(buffer, "/group_create ") == 0) {
+                do_create_group_flow(sock_fd);
+            } else if (strncmp(buffer, "/join ", 6) == 0) {
+                // inline join: /join <group>
+                char *g = buffer + 6;
+                while (*g && isspace((unsigned char)*g)) g++;
+                if (strlen(g) == 0) { ui_add_log("Usage: /join <group>"); return; }
+                do_join_group_flow(sock_fd, g);
+            } else if (strcmp(buffer, "/group_invite") == 0) {
+                do_invite_group_flow(sock_fd);
+            } else if (strncmp(buffer, "/group_invite ", 14) == 0) {
+                // allow inline: /group_invite <user> <group>
+                char *p = buffer + 14;
+                while (*p && isspace((unsigned char)*p)) p++;
+                char user[MAX_USERNAME] = {0}, group[MAX_USERNAME] = {0};
+                sscanf(p, "%31s %31s", user, group);
+                if (strlen(user) == 0 || strlen(group) == 0) { ui_add_log("Usage: /group_invite <user> <group>"); return; }
+                ChatPacket pkt; memset(&pkt, 0, sizeof(pkt));
+                pkt.type = MSG_TYPE_INVITE_TO_GROUP_REQUEST;
+                strncpy(pkt.target_user, user, MAX_USERNAME-1);
+                strncpy(pkt.body, group, MAX_BODY-1);
+                if (send_packet(&pkt) == 0) ui_add_log("Invite sent.");
+                else ui_add_log("Failed to send invite.");
+            } else if (strcmp(buffer, "/group_remove") == 0) {
+                do_remove_group_flow(sock_fd);
+            } else if (strncmp(buffer, "/group_remove ", 14) == 0) {
+                char *p = buffer + 14;
+                char user[MAX_USERNAME] = {0}, group[MAX_USERNAME] = {0};
+                sscanf(p, "%31s %31s", user, group);
+                if (strlen(user) == 0 || strlen(group) == 0) { ui_add_log("Usage: /group_remove <user> <group>"); return; }
+                ChatPacket pkt; memset(&pkt, 0, sizeof(pkt));
+                pkt.type = MSG_TYPE_REMOVE_FROM_GROUP_REQUEST;
+                strncpy(pkt.target_user, user, MAX_USERNAME-1);
+                strncpy(pkt.body, group, MAX_BODY-1);
+                if (send_packet(&pkt) == 0) ui_add_log("Remove request sent.");
+                else ui_add_log("Failed to send remove request.");
+            } else if (strcmp(buffer, "/group_leave") == 0) {
+                do_leave_group_flow(sock_fd);
+            } else if (strncmp(buffer, "/group_leave ", 13) == 0) {
+                char *g = buffer + 13;
+                while (*g && isspace((unsigned char)*g)) g++;
+                if (strlen(g) == 0) { ui_add_log("Usage: /group_leave <group>"); return; }
+                ChatPacket pkt; memset(&pkt, 0, sizeof(pkt));
+                pkt.type = MSG_TYPE_LEAVE_GROUP_REQUEST;
+                strncpy(pkt.target_user, g, MAX_USERNAME-1);
+                if (send_packet(&pkt) == 0) ui_add_log("Leave request sent.");
+                else ui_add_log("Failed to send leave request.");
+            } else if (strcmp(buffer, "/group_joined") == 0) {
+                ChatPacket pkt; memset(&pkt, 0, sizeof(pkt));
+                pkt.type = MSG_TYPE_GROUP_LIST_JOINED_REQUEST;
+                if (send_packet(&pkt) == 0) ui_add_log("Requested joined groups...");
+                else ui_add_log("Failed to request joined groups.");
+            } else if (strcmp(buffer, "/group_all") == 0) {
+                ChatPacket pkt; memset(&pkt, 0, sizeof(pkt));
+                pkt.type = MSG_TYPE_GROUP_LIST_ALL_REQUEST;
+                if (send_packet(&pkt) == 0) ui_add_log("Requested all groups...");
+                else ui_add_log("Failed to request groups list.");
             }
+            // ...existing else branches...
         } 
         // --- KHÔNG PHẢI LỆNH -> Đây là tin nhắn chat ---
         else {
@@ -540,13 +764,23 @@ void handle_server_message(int sock_fd) {
         } break;
 
         case MSG_TYPE_FRIEND_UPDATE:
-            // Generic updates (success/failure/status). Display the body if provided, otherwise show source_user + default message.
-            if (packet.body[0]) ui_add_log(packet.body);
-            else {
-                char buf[MAX_BODY];
-                snprintf(buf, sizeof(buf), "Friend update: %s", packet.source_user);
+            // Show "username <status>" when server provides body, otherwise fallback
+            {
+                char buf[MAX_BODY + MAX_USERNAME + 4];
+                if (packet.body[0]) {
+                    // Prefer: "<username> <message>"
+                    snprintf(buf, sizeof(buf), "%s %s",
+                             (packet.source_user[0] ? packet.source_user : "Server"),
+                             packet.body);
+                } else {
+                    snprintf(buf, sizeof(buf), "Friend update: %s", packet.source_user);
+                }
                 ui_add_log(buf);
             }
+            break;
+
+        case MSG_TYPE_GROUP_LIST_RESPONSE:
+            ui_add_log(packet.body);
             break;
 
         default:

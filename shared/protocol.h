@@ -34,6 +34,12 @@ typedef enum {
     MSG_TYPE_CREATE_GROUP_REQUEST,
     MSG_TYPE_JOIN_GROUP_REQUEST,
     MSG_TYPE_INVITE_TO_GROUP_REQUEST,
+    MSG_TYPE_REMOVE_FROM_GROUP_REQUEST, // remove user from group
+    MSG_TYPE_LEAVE_GROUP_REQUEST,       // leave group
+
+    // Group list requests
+    MSG_TYPE_GROUP_LIST_JOINED_REQUEST, // client asks server: list groups user joined
+    MSG_TYPE_GROUP_LIST_ALL_REQUEST,    // client asks server: list all available groups
 
     // Server -> Client
     MSG_TYPE_REGISTER_SUCCESS,
@@ -58,6 +64,7 @@ typedef enum {
 
     // Group responses
     MSG_TYPE_GROUP_RESPONSE,          // generic group operation response
+    MSG_TYPE_GROUP_LIST_RESPONSE,     // response carrying group list (joined or all)
 
     // Expand below as needed...
 } MessageType;
@@ -67,7 +74,7 @@ typedef enum {
 typedef struct {
     MessageType type;
     char source_user[MAX_USERNAME]; // origin username
-    char target_user[MAX_USERNAME]; // target username (for friend commands, messages, etc.)
+    char target_user[MAX_USERNAME]; // target username (for friend commands, messages, etc.) or group name for group ops
     char body[MAX_BODY];            // text body / notification
 } ChatPacket;
 

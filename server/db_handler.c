@@ -305,3 +305,173 @@ int db_get_friend_list(sqlite3 *db, const char* user, db_friend_list_callback ca
     sqlite3_finalize(stmt);
     return 0;
 }
+
+// --- NEW: Group DB functions ---
+
+int db_create_group(sqlite3 *db, const char* group_name, const char* owner) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "INSERT INTO groups (group_name, owner_username) VALUES (?, ?);";
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare create_group: %s\n", sqlite3_errmsg(db));
+        if (stmt) sqlite3_finalize(stmt);
+        return 1;
+    }
+    sqlite3_bind_text(stmt, 1, group_name, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, owner, -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc == SQLITE_DONE) return 0;
+    fprintf(stderr, "SQL error create_group: %s\n", sqlite3_errmsg(db));
+    return 1;
+}
+
+int db_group_exists(sqlite3 *db, const char* group_name) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT 1 FROM groups WHERE group_name = ? LIMIT 1;";
+    int exists = 0;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        if (stmt) sqlite3_finalize(stmt);
+        return 0;
+    }
+    sqlite3_bind_text(stmt, 1, group_name, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) exists = 1;
+    sqlite3_finalize(stmt);
+    return exists;
+}
+
+int db_add_group_member(sqlite3 *db, const char* group_name, const char* username) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql_group_id = "SELECT group_id FROM groups WHERE group_name = ? LIMIT 1;";
+    int rc = sqlite3_prepare_v2(db, sql_group_id, -1, &stmt, 0);
+    if (rc != SQLITE_OK) { if (stmt) sqlite3_finalize(stmt); return 1; }
+    sqlite3_bind_text(stmt, 1, group_name, -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) { sqlite3_finalize(stmt); return 1; }
+    int group_id = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+
+    const char *sql = "INSERT INTO group_members (group_id, username) VALUES (?, ?);";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, 0) != SQLITE_OK) { if (stmt) sqlite3_finalize(stmt); return 1; }
+    sqlite3_bind_int(stmt, 1, group_id);
+    sqlite3_bind_text(stmt, 2, username, -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return (rc == SQLITE_DONE) ? 0 : 1;
+}
+
+int db_remove_group_member(sqlite3 *db, const char* group_name, const char* username) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql_group_id = "SELECT group_id FROM groups WHERE group_name = ? LIMIT 1;";
+    int rc = sqlite3_prepare_v2(db, sql_group_id, -1, &stmt, 0);
+    if (rc != SQLITE_OK) { if (stmt) sqlite3_finalize(stmt); return 1; }
+    sqlite3_bind_text(stmt, 1, group_name, -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) { sqlite3_finalize(stmt); return 1; }
+    int group_id = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+
+    const char *sql = "DELETE FROM group_members WHERE group_id = ? AND username = ?;";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, 0) != SQLITE_OK) { if (stmt) sqlite3_finalize(stmt); return 1; }
+    sqlite3_bind_int(stmt, 1, group_id);
+    sqlite3_bind_text(stmt, 2, username, -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+    int changes = sqlite3_changes(db);
+    sqlite3_finalize(stmt);
+    return (rc == SQLITE_DONE && changes > 0) ? 0 : 1;
+}
+
+int db_is_group_owner(sqlite3 *db, const char* group_name, const char* username) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT 1 FROM groups WHERE group_name = ? AND owner_username = ? LIMIT 1;";
+    int is_owner = 0;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        if (stmt) sqlite3_finalize(stmt);
+        return 0;
+    }
+    sqlite3_bind_text(stmt, 1, group_name, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, username, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) is_owner = 1;
+    sqlite3_finalize(stmt);
+    return is_owner;
+}
+
+int db_get_group_members(sqlite3 *db, const char* group_name, db_group_member_callback callback, void* arg) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT gm.username FROM group_members gm "
+                      "JOIN groups g ON g.group_id = gm.group_id "
+                      "WHERE g.group_name = ?;";
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
+    if (rc != SQLITE_OK) {
+        if (stmt) sqlite3_finalize(stmt);
+        return 1;
+    }
+    sqlite3_bind_text(stmt, 1, group_name, -1, SQLITE_STATIC);
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const char *member = (const char*)sqlite3_column_text(stmt, 0);
+        callback(arg, member);
+    }
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+// --- NEW: Group listing helpers ---
+
+int db_get_groups_for_user(sqlite3 *db, const char* username, db_group_list_callback callback, void* arg) {
+    if (!db || !username || !callback) return 1;
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT g.group_name FROM groups g "
+                      "JOIN group_members gm ON g.group_id = gm.group_id "
+                      "WHERE gm.username = ?;";
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        if (stmt) sqlite3_finalize(stmt);
+        return 1;
+    }
+    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const char *gname = (const char*)sqlite3_column_text(stmt, 0);
+        callback(arg, gname);
+    }
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+int db_get_all_groups(sqlite3 *db, db_group_list_callback callback, void* arg) {
+    if (!db || !callback) return 1;
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT group_name FROM groups;";
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        if (stmt) sqlite3_finalize(stmt);
+        return 1;
+    }
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const char *gname = (const char*)sqlite3_column_text(stmt, 0);
+        callback(arg, gname);
+    }
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+// --- NEW: Check if a user is a member of a group ---
+int db_is_group_member(sqlite3 *db, const char* group_name, const char* username) {
+    if (!db || !group_name || !username) return 0;
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT 1 FROM group_members gm "
+                      "JOIN groups g ON g.group_id = gm.group_id "
+                      "WHERE g.group_name = ? AND gm.username = ? LIMIT 1;";
+    int is_member = 0;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        if (stmt) sqlite3_finalize(stmt);
+        return 0;
+    }
+    sqlite3_bind_text(stmt, 1, group_name, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, username, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) is_member = 1;
+    sqlite3_finalize(stmt);
+    return is_member;
+}

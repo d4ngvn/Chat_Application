@@ -117,14 +117,22 @@ void ui_update_options(ClientState state) {
     } else if (state == STATE_LOGGED_IN) {
         mvwprintw(win_option, y++, 1, "USAGE: /<option>");
         mvwprintw(win_option, y++, 1, "-------------------");
-        mvwprintw(win_option, y++, 1, "1. Private Chat (/msg )");
-        mvwprintw(win_option, y++, 1, "2. List Friends(/friends)");
-        mvwprintw(win_option, y++, 1, "3. Add Friend (/add)");
-        mvwprintw(win_option, y++, 1, "4. Accept Friend (/accept)");
-        mvwprintw(win_option, y++, 1, "5. Create Group (/group)");
-        mvwprintw(win_option, y++, 1, "6. Decline Friend (/decline)");
-        mvwprintw(win_option, y++, 1, "7. Unfriend (/unfriend)");
-        // ... (thêm các lệnh khác nếu cần)
+        mvwprintw(win_option, y++, 1, "Private Chat (/msg )");
+        mvwprintw(win_option, y++, 1, "-------------------");
+        mvwprintw(win_option, y++, 1, "List Friends(/friends)");
+        mvwprintw(win_option, y++, 1, "Add Friend (/add)");
+        mvwprintw(win_option, y++, 1, "Unfriend (/unfriend)");
+        mvwprintw(win_option, y++, 1, "Accept Friend (/accept)");
+        mvwprintw(win_option, y++, 1, "Decline Friend (/decline)");
+        mvwprintw(win_option, y++, 1, "-------------------");
+        mvwprintw(win_option, y++, 1, "List All Groups (/group_all)");
+        mvwprintw(win_option, y++, 1, "List Joined Groups (/group_joined)");
+        mvwprintw(win_option, y++, 1, "Create Group (/group_create)");
+        mvwprintw(win_option, y++, 1, "Invite User  (/group_invite)");
+        mvwprintw(win_option, y++, 1, "Removing User (/group_remove)");
+        mvwprintw(win_option, y++, 1, "Join Group (/join)");
+        mvwprintw(win_option, y++, 1, "Leaving Group : (/group_leave)");
+        mvwprintw(win_option, y++, 1, "-------------------");
         mvwprintw(win_option, y++, 1, "/exit - Thoát");
     }
     

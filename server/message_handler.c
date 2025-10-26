@@ -4,6 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "server.h"
+#include "friend_manager.h" // add to call broadcast_status_to_friends
 
 // Hàm này sẽ gửi danh sách online cho mọi người
 extern void broadcast_online_list(ClientSession* sessions);
@@ -73,6 +74,8 @@ void handle_login(int client_fd, ChatPacket* packet, sqlite3 *db, ClientSession*
         db_send_pending_messages(db, packet->source_user, send_packet_callback, &client_fd);
         broadcast_online_list(sessions);
 
+        // Notify friends that this user is now online
+        broadcast_status_to_friends(packet->source_user, sessions, db, 1); // 1 = online
     } else {
         // --- ĐĂNG NHẬP THẤT BẠI ---
         printf("Login failed for user '%s': Invalid credentials.\n", packet->source_user);

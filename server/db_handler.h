@@ -28,4 +28,25 @@ int db_friend_unfriend(sqlite3 *db, const char* user1, const char* user2);
 // Hàm callback để xử lý từng dòng kết quả
 typedef int (*db_friend_list_callback)(void* arg, const char* friend_name);
 int db_get_friend_list(sqlite3 *db, const char* user, db_friend_list_callback callback, void* arg);
+
+// --- NEW: Group DB APIs ---
+int db_create_group(sqlite3 *db, const char* group_name, const char* owner);
+int db_group_exists(sqlite3 *db, const char* group_name);
+int db_add_group_member(sqlite3 *db, const char* group_name, const char* username);
+int db_remove_group_member(sqlite3 *db, const char* group_name, const char* username);
+int db_is_group_owner(sqlite3 *db, const char* group_name, const char* username);
+/**
+ * callback signature: void cb(void* arg, const char* member_name)
+ */
+typedef void (*db_group_member_callback)(void* arg, const char* member_name);
+int db_get_group_members(sqlite3 *db, const char* group_name, db_group_member_callback callback, void* arg);
+
+// NEW: list groups a user has joined / list all groups
+typedef int (*db_group_list_callback)(void* arg, const char* group_name);
+int db_get_groups_for_user(sqlite3 *db, const char* username, db_group_list_callback callback, void* arg);
+int db_get_all_groups(sqlite3 *db, db_group_list_callback callback, void* arg);
+
+// NEW: check membership
+int db_is_group_member(sqlite3 *db, const char* group_name, const char* username);
+
 #endif // DB_HANDLER_H

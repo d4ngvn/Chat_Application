@@ -12,6 +12,7 @@
 #include "user_manager.h"
 #include "server.h" // File .h ta vừa tạo
 #include "friend_manager.h" // <-- ADD: declare friend-related handlers
+#include "group_manager.h"  // <-- NEW: may contain group helpers
 
 #define PORT 8888
 #define MAX_EVENTS 10
@@ -74,17 +75,82 @@ void broadcast_online_list(ClientSession* sessions) {
     }
 }
 
+// Helper: find session by username (local copy to avoid cross-file dependency)
+static ClientSession* find_session_by_username_local(const char* username) {
+    if (!username) return NULL;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (sessions[i].fd != -1 && sessions[i].username[0] != '\0' && strcmp(sessions[i].username, username) == 0) {
+            return &sessions[i];
+        }
+    }
+    return NULL;
+}
+
+// Context passed when notifying members of a specific group
+typedef struct {
+    const char* user;   // user who went offline
+    const char* group;  // group name for this callback
+} MemberNotifyCtx;
+
+// db_group_member_callback signature: void (*cb)(void* arg, const char* member_name);
+static void member_notify_cb(void* arg, const char* member_name) {
+    MemberNotifyCtx* mc = (MemberNotifyCtx*)arg;
+    if (!mc || !member_name) return;
+    if (strcmp(member_name, mc->user) == 0) return;
+
+    ClientSession* s = find_session_by_username_local(member_name);
+    if (s && s->fd != -1) {
+        ChatPacket pkt;
+        memset(&pkt, 0, sizeof(pkt));
+        pkt.type = MSG_TYPE_RECEIVE_GROUP_MESSAGE;
+        strncpy(pkt.source_user, mc->user, MAX_USERNAME - 1);
+        strncpy(pkt.target_user, mc->group, MAX_USERNAME - 1);
+        snprintf(pkt.body, MAX_BODY, "%s went offline.", mc->user);
+        write(s->fd, &pkt, sizeof(ChatPacket));
+    }
+}
+
+// db_group_list_callback signature: int (*cb)(void* arg, const char* group_name);
+static int group_list_cb(void* arg, const char* group_name) {
+    const char* user = (const char*)arg;
+    if (!user || !group_name) return 0;
+
+    MemberNotifyCtx mc;
+    mc.user = user;
+    mc.group = group_name;
+
+    // For this group, notify each member (except user)
+    db_get_group_members(db, group_name, member_notify_cb, &mc);
+    return 0;
+}
+
+// Helper: notify all group members (except 'user') that 'user' went offline.
+// Uses db_get_groups_for_user -> group_list_cb
+static void notify_user_offline_in_groups(const char* user) {
+    if (!user || !db) return;
+    db_get_groups_for_user(db, user, group_list_cb, (void*)user);
+}
+
 void remove_session(int fd) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (sessions[i].fd == fd) {
             printf("Session removed for fd %d (user: %s)\n", fd, sessions[i].username);
+            // Notify friends that this user is going offline BEFORE clearing username
+            if (sessions[i].username[0] != '\0') {
+                // broadcast status to friends
+                broadcast_status_to_friends(sessions[i].username, sessions, db, 0); // 0 = offline
+
+                // Notify group members that this user went offline
+                notify_user_offline_in_groups(sessions[i].username);
+            }
+
             close(sessions[i].fd);
             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL); 
             sessions[i].fd = -1; 
             sessions[i].buffer_len = 0;
             memset(sessions[i].username, 0, MAX_USERNAME);
 
-            // THÊM MỚI: Thông báo cho mọi người user này đã offline
+            // THÊM MỚI: Thông báo cho mọi người user này đã offline (online list update)
             broadcast_online_list(sessions); 
             return;
         }
@@ -122,6 +188,11 @@ void process_packet(int client_fd, ChatPacket* packet) {
         case MSG_TYPE_PRIVATE_MESSAGE: // <-- THÊM CASE MỚI
             handle_private_message(packet, sessions, db);
             break;
+
+        case MSG_TYPE_GROUP_MESSAGE:
+            handle_group_message(packet, sessions, db);
+            break;
+
         case MSG_TYPE_FRIEND_REQUEST:
             handle_friend_request(client_fd, packet, sessions, db);
             break;
@@ -143,6 +214,31 @@ void process_packet(int client_fd, ChatPacket* packet) {
             handle_friend_list_request(client_fd, session->username, sessions, db);
             break;
 
+        // --- Group ops ---
+        case MSG_TYPE_CREATE_GROUP_REQUEST:
+            handle_create_group(client_fd, packet, sessions, db);
+            break;
+        case MSG_TYPE_JOIN_GROUP_REQUEST:
+            handle_join_group_request(client_fd, packet, sessions, db);
+            break;
+        case MSG_TYPE_INVITE_TO_GROUP_REQUEST:
+            handle_invite_to_group(client_fd, packet, sessions, db);
+            break;
+        case MSG_TYPE_REMOVE_FROM_GROUP_REQUEST:
+            handle_remove_from_group(client_fd, packet, sessions, db);
+            break;
+        case MSG_TYPE_LEAVE_GROUP_REQUEST:
+            handle_leave_group(client_fd, packet, sessions, db);
+            break;
+
+        // NEW: group listing requests
+        case MSG_TYPE_GROUP_LIST_JOINED_REQUEST:
+            handle_group_list_joined(client_fd, packet, sessions, db);
+            break;
+        case MSG_TYPE_GROUP_LIST_ALL_REQUEST:
+            handle_group_list_all(client_fd, packet, sessions, db);
+            break;
+
         default:
             printf("Received unknown packet type from fd %d\n", client_fd);
     }
@@ -150,19 +246,20 @@ void process_packet(int client_fd, ChatPacket* packet) {
 
 // Xử lý dữ liệu từ client (Stream Handling) - NÂNG CẤP
 void handle_client_data(int client_fd) {
-    ClientSession* session = get_session(client_fd);
-    if (!session) return;
-
+    // We will re-query session each iteration because process_packet(...) may call remove_session()
+    // which clears the session slot; using a stale pointer caused use-after-free and segfault.
     while (1) { // Đọc liên tục cho đến khi EAGAIN (với EPOLLET)
+        ClientSession* session = get_session(client_fd);
+        if (!session) return;
         int bytes_to_read = sizeof(ChatPacket) - session->buffer_len;
-        if (bytes_to_read <= 0) break; // Buffer đã đầy? (lỗi)
+        if (bytes_to_read <= 0) return; // Buffer full or inconsistent; bail out
 
         ssize_t bytes_read = read(client_fd, session->read_buffer + session->buffer_len, bytes_to_read);
 
         if (bytes_read == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // Không còn dữ liệu để đọc
-                break; 
+                break;
             }
             // Lỗi thật
             perror("read() failed");
@@ -176,13 +273,22 @@ void handle_client_data(int client_fd) {
             return;
         }
 
+        session = get_session(client_fd);
+        if (!session) return;
         session->buffer_len += bytes_read;
 
         // Xử lý tất cả các gói tin có trong buffer
-        while (session->buffer_len >= sizeof(ChatPacket)) {
+        while (1) {
+            session = get_session(client_fd);
+            if (!session) return; // session may have been removed by process_packet
+            if (session->buffer_len < (int)sizeof(ChatPacket)) break;
+
             process_packet(client_fd, (ChatPacket*)session->read_buffer);
 
-            // Di chuyển phần dữ liệu còn lại (nếu có) lên đầu buffer
+            // If the session was removed during processing, stop immediately
+            session = get_session(client_fd);
+            if (!session) return;
+
             int remaining = session->buffer_len - sizeof(ChatPacket);
             if (remaining > 0) {
                 memmove(session->read_buffer, session->read_buffer + sizeof(ChatPacket), remaining);
